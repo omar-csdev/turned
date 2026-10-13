@@ -1,6 +1,6 @@
 import { EMPTY_INPUT, MAX_PLAYERS, RECIPES, WEAPONS } from './protocol';
 import type { BuildingKind, BuildingState, GameEvent, GameSnapshot, LootState, PlayerAction, PlayerInput, PlayerState, ResourceId, ResourceNodeState, Vec2, VehicleState, WeaponId, ZombieState } from './protocol';
-import { ISLAND_BUILDINGS, LOOT_SPAWNS, RADIO, RESOURCE_NODES, SPAWN, VEHICLE_SPAWNS, ZOMBIE_SPAWNS, isBlocked } from './island';
+import { BUILDING_WALLS, INTERIOR_PROPS, ISLAND_BUILDINGS, LOOT_SPAWNS, RADIO, RESOURCE_NODES, SPAWN, VEHICLE_SPAWNS, ZOMBIE_SPAWNS, buildingEntrance, isBlocked, isInsideBuilding } from './island';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const distance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -284,8 +284,13 @@ export class GameSimulation {
 
   private obstacleDistance(ray: Ray, range: number): number {
     let nearest = range;
-    for (const b of ISLAND_BUILDINGS) {
-      const hit = rayBox(ray, b.x, b.z, b.width, b.depth, b.height, 0);
+    for (const b of BUILDING_WALLS) {
+      const hit = rayBox(ray, b.x, b.z, b.width, b.depth, b.height, 0, b.y);
+      if (hit >= 0) nearest = Math.min(nearest, hit);
+    }
+    for (const prop of INTERIOR_PROPS) {
+      if (!prop.collidable) continue;
+      const hit = rayBox(ray, prop.x, prop.z, prop.width, prop.depth, prop.height, prop.yaw, prop.y);
       if (hit >= 0) nearest = Math.min(nearest, hit);
     }
     for (const b of this.buildings) {
@@ -314,7 +319,7 @@ export class GameSimulation {
       }
       return;
     }
-    const item = this.loot.filter(l => l.active && distance(l, p) < 3.2).sort((a, b) => distance(a, p) - distance(b, p))[0];
+    const item = this.loot.filter(l => l.active && distance(l, p) < 3.2 && this.canReachLoot(p, l)).sort((a, b) => distance(a, p) - distance(b, p))[0];
     if (item) {
       item.active = false;
       switch (item.kind) {
@@ -340,6 +345,14 @@ export class GameSimulation {
       this.placeOccupant(p, vehicle);
       this.notice(p, seat === 0 ? 'Driving: WASD, E to exit. Your friends can ride along.' : 'Passenger seat. E to exit.');
     }
+  }
+
+  private canReachLoot(p: PlayerState, item: LootState): boolean {
+    const dx = item.x - p.x, dz = item.z - p.z, dy = (item.y ?? 0) + .3 - (p.y + EYE_HEIGHT);
+    const length = Math.hypot(dx, dy, dz);
+    if (length > 3.5) return false;
+    if (length < .01) return true;
+    return this.obstacleDistance({ x: p.x, y: p.y + EYE_HEIGHT, z: p.z, dx: dx / length, dy: dy / length, dz: dz / length }, length) >= length - .08;
   }
 
   private craft(p: PlayerState, recipeId: string): void {
@@ -469,14 +482,15 @@ export class GameSimulation {
       for (const p of survivors) { const d = distance(p, z); if (d < nearest) { target = p; nearest = d; } }
       const destination = target ?? (brain.noise && this.time < brain.noiseUntil ? brain.noise : undefined);
       if (!destination) continue;
-      const dx = destination.x - z.x, dz = destination.z - z.z, d = Math.hypot(dx, dz);
+      const waypoint = this.navigationPoint(z, destination);
+      const dx = waypoint.x - z.x, dz = waypoint.z - z.z, d = Math.hypot(dx, dz);
       z.yaw = Math.atan2(-dx, -dz);
       const reach = target?.vehicleId ? 2.35 : 1.25;
       const barrier = this.buildings.find(b => b.health > 0 && this.insideBuilding(z.x + dx / Math.max(d, .01) * .8, z.z + dz / Math.max(d, .01) * .8, b, .5));
       if (barrier) {
         z.attacking = true;
         if (this.time >= brain.nextAttack) { barrier.health = Math.max(0, barrier.health - (z.kind === 'armored' ? 24 : 14)); brain.nextAttack = this.time + .85; }
-      } else if (target && nearest < reach && this.obstacleDistance({ x: z.x, y: .9, z: z.z, dx: dx / Math.max(d, .01), dy: 0, dz: dz / Math.max(d, .01) }, nearest) >= nearest - .1) {
+      } else if (target && nearest < reach && this.obstacleDistance({ x: z.x, y: .9, z: z.z, dx: (target.x - z.x) / Math.max(nearest, .01), dy: 0, dz: (target.z - z.z) / Math.max(nearest, .01) }, nearest) >= nearest - .1) {
         z.attacking = true;
         if (this.time >= brain.nextAttack) {
           if (target.vehicleId) {
@@ -501,6 +515,67 @@ export class GameSimulation {
     }
   }
 
+  /** Route through actual entrances, then use a tiny visibility graph to round nearby obstacles. */
+  private navigationPoint(from: Vec2, destination: Vec2): Vec2 {
+    const sourceBuilding = ISLAND_BUILDINGS.find(b => b.enterable !== false && isInsideBuilding(from.x, from.z, b));
+    const targetBuilding = ISLAND_BUILDINGS.find(b => b.enterable !== false && isInsideBuilding(destination.x, destination.z, b));
+    let goal: Vec2 = destination;
+    if (sourceBuilding && sourceBuilding !== targetBuilding) {
+      const front = sourceBuilding.z + sourceBuilding.depth / 2;
+      goal = buildingEntrance(sourceBuilding, Math.abs(from.x - sourceBuilding.x) < 1 && from.z > front - 1.7 ? 1.4 : -1.2);
+    } else if (targetBuilding && sourceBuilding !== targetBuilding) {
+      const front = targetBuilding.z + targetBuilding.depth / 2;
+      goal = buildingEntrance(targetBuilding, Math.abs(from.x - targetBuilding.x) < 1 && from.z < front + 2 && from.z >= front - .1 ? -1.2 : 1.4);
+    }
+    // Home interiors have a connected rear bedroom. Aim for its central opening before crossing.
+    if (sourceBuilding?.theme === 'home') {
+      const divider = sourceBuilding.z - sourceBuilding.depth * .1;
+      if ((from.z - divider) * (goal.z - divider) < 0) {
+        const side = from.z > divider ? 1 : -1;
+        goal = { x: sourceBuilding.x, z: divider + (Math.abs(from.x - sourceBuilding.x) < .7 && Math.abs(from.z - divider) < 1.5 ? -side : side) * 1.1 };
+      }
+    }
+    const blockers: { x: number; z: number; width: number; depth: number }[] = [];
+    for (const b of ISLAND_BUILDINGS) {
+      if (b === sourceBuilding || (b === targetBuilding && goal.z < b.z + b.depth / 2)) continue;
+      blockers.push(b);
+    }
+    if (sourceBuilding) for (const prop of INTERIOR_PROPS) {
+      if (prop.buildingId !== sourceBuilding.id || !prop.collidable) continue;
+      blockers.push({ x: prop.x, z: prop.z, width: Math.abs(Math.cos(prop.yaw)) * prop.width + Math.abs(Math.sin(prop.yaw)) * prop.depth, depth: Math.abs(Math.cos(prop.yaw)) * prop.depth + Math.abs(Math.sin(prop.yaw)) * prop.width });
+    }
+    let obstacle: typeof blockers[number] | undefined, nearest = Infinity;
+    for (const b of blockers) {
+      const hit = segmentBoxDistance(from, goal, b, .35);
+      if (hit >= 0 && hit < nearest) { nearest = hit; obstacle = b; }
+    }
+    if (!obstacle) return goal;
+    const b = obstacle, margin = .9;
+    const corners = [
+      { x: b.x - b.width / 2 - margin, z: b.z - b.depth / 2 - margin },
+      { x: b.x + b.width / 2 + margin, z: b.z - b.depth / 2 - margin },
+      { x: b.x + b.width / 2 + margin, z: b.z + b.depth / 2 + margin },
+      { x: b.x - b.width / 2 - margin, z: b.z + b.depth / 2 + margin },
+    ].filter(point => !this.blocked(point.x, point.z, .4));
+    const points = [from, ...corners, goal], last = points.length - 1;
+    const costs = points.map((_, i) => i === 0 ? 0 : Infinity), previous = points.map(() => -1), visited = new Set<number>();
+    for (let step = 0; step < points.length; step++) {
+      let current = -1;
+      for (let i = 0; i < points.length; i++) if (!visited.has(i) && (current === -1 || costs[i] < costs[current])) current = i;
+      if (current === -1 || !Number.isFinite(costs[current]) || current === last) break;
+      visited.add(current);
+      for (let i = 1; i < points.length; i++) {
+        if (visited.has(i) || segmentBoxDistance(points[current], points[i], b, .35) >= 0) continue;
+        const cost = costs[current] + distance(points[current], points[i]);
+        if (cost < costs[i]) { costs[i] = cost; previous[i] = current; }
+      }
+    }
+    if (previous[last] === -1) return goal;
+    let next = last;
+    while (previous[next] > 0) next = previous[next];
+    return points[next];
+  }
+
   private damageZombie(z: ZombieState, damage: number, player?: PlayerState, headshot = false, y = 1): void {
     if (z.health <= 0) return;
     z.health = Math.max(0, z.health - damage);
@@ -509,7 +584,8 @@ export class GameSimulation {
       if (player) player.kills++;
       this.brains.get(z.id)!.respawnAt = this.time + 100;
       this.emit({ type: 'kill', x: z.x, z: z.z, actorId: player?.id, targetId: z.id, headshot });
-      if (this.loot.length < 160) this.loot.push({ id: `drop-${++this.serial}`, x: z.x, z: z.z, kind: this.serial % 3 === 0 ? 'ammo' : 'cloth', active: true });
+      this.loot = this.loot.filter(l => !l.id.startsWith('drop-') || l.active);
+      if (this.loot.filter(l => l.id.startsWith('drop-')).length < 80) this.loot.push({ id: `drop-${++this.serial}`, x: z.x, z: z.z, kind: this.serial % 3 === 0 ? 'ammo' : 'cloth', active: true });
     }
   }
 
@@ -556,13 +632,13 @@ export class GameSimulation {
 }
 
 /** Ray intersection with an oriented, ground-level box; -1 means a miss. */
-function rayBox(ray: Ray, x: number, z: number, width: number, depth: number, height: number, yaw: number): number {
+function rayBox(ray: Ray, x: number, z: number, width: number, depth: number, height: number, yaw: number, baseY = 0): number {
   const cosine = Math.cos(yaw), sine = Math.sin(yaw);
   const localX = (ray.x - x) * cosine - (ray.z - z) * sine;
   const localZ = (ray.x - x) * sine + (ray.z - z) * cosine;
   const dirX = ray.dx * cosine - ray.dz * sine, dirZ = ray.dx * sine + ray.dz * cosine;
   let near = 0, far = Infinity;
-  for (const [origin, direction, min, max] of [[localX, dirX, -width / 2, width / 2], [ray.y, ray.dy, 0, height], [localZ, dirZ, -depth / 2, depth / 2]]) {
+  for (const [origin, direction, min, max] of [[localX, dirX, -width / 2, width / 2], [ray.y, ray.dy, baseY, baseY + height], [localZ, dirZ, -depth / 2, depth / 2]]) {
     if (Math.abs(direction) < 1e-8) { if (origin < min || origin > max) return -1; }
     else {
       const t1 = (min - origin) / direction, t2 = (max - origin) / direction;
@@ -571,4 +647,11 @@ function rayBox(ray: Ray, x: number, z: number, width: number, depth: number, he
     }
   }
   return far >= 0 ? near : -1;
+}
+
+function segmentBoxDistance(from: Vec2, to: Vec2, box: { x: number; z: number; width: number; depth: number }, margin: number): number {
+  const length = distance(from, to);
+  if (length < .01) return -1;
+  const hit = rayBox({ x: from.x, y: .5, z: from.z, dx: (to.x - from.x) / length, dy: 0, dz: (to.z - from.z) / length }, box.x, box.z, box.width + margin * 2, box.depth + margin * 2, 2, 0);
+  return hit >= 0 && hit < length - .01 ? hit : -1;
 }

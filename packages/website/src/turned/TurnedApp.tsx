@@ -52,6 +52,7 @@ import {
   RADIO,
   RESOURCE_NODES,
   ROADS,
+  hasStaticLineOfSight,
 } from "@survive-the-night/game-shared/turned/island";
 import type { TurnedEngine } from "./engine";
 import "./turned.css";
@@ -616,7 +617,7 @@ export default function TurnedApp() {
               </p>
               <div className="turned-feature-stats">
                 <span>
-                  <Trees size={17} /> 6 locations
+                  <Trees size={17} /> {LOCATIONS.length} locations
                 </span>
                 <span>
                   <Users size={17} /> 1–8 survivors
@@ -1132,7 +1133,7 @@ function FieldGuide() {
           <Trees size={23} />
           <h3>Scavenge & craft</h3>
           <p>
-            Use your hatchet on trees, rocks, and scrap piles. Collect cloth and supplies. Open
+            Search homes, shops, barns, and military rooms for supplies. Use your hatchet on trees, rocks, and scrap piles. Open
             crafting to build a workbench, barricades, and healing campfires.
           </p>
         </div>
@@ -1373,7 +1374,10 @@ function GameHUD({
   if (vehicle) prompt = `Exit ${vehicle.kind === "jeep" ? "jeep" : "pickup"}`;
   else {
     const loot = snapshot.loot
-      .filter((l) => l.active && distance(l, player) < 3.2)
+      .filter((l) => l.active && distance(l, player) < 3.2 && hasStaticLineOfSight(
+        { x: player.x, z: player.z, y: player.y + 1.62 },
+        { x: l.x, z: l.z, y: (l.y ?? 0) + .3 },
+      ))
       .sort((a, b) => distance(a, player) - distance(b, player))[0];
     const car = snapshot.vehicles
       .filter((v) => v.health > 0 && distance(v, player) < 4.5)

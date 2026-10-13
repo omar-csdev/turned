@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { GameEvent, GameSnapshot, PlayerState, WeaponId, ZombieState } from '@survive-the-night/game-shared/turned/protocol';
 import { WEAPONS } from '@survive-the-night/game-shared/turned/protocol';
-import { ISLAND_BUILDINGS, LOOT_SPAWNS, VEHICLE_SPAWNS, ZOMBIE_SPAWNS } from '@survive-the-night/game-shared/turned/island';
+import { BUILDING_WALLS, LOOT_SPAWNS, VEHICLE_SPAWNS, ZOMBIE_SPAWNS } from '@survive-the-night/game-shared/turned/island';
 import { createIsland, type IslandScene } from './world';
 import { createLoot, createStructure, createSurvivor, createVehicle, createWeapon, createZombie, type HumanoidModel, type VehicleModel } from './models';
 
@@ -146,6 +146,7 @@ export class TurnedRenderer {
     this.previewActors.visible = enabled;
     this.dynamicActors.visible = !enabled;
     if (enabled) {
+      this.island.setInteriorView();
       for (const id of this.activeNodes.keys()) this.island.setNodeActive(id, true);
       this.activeNodes.clear();
       for (const particle of this.particles) particle.life = 0;
@@ -214,14 +215,19 @@ export class TurnedRenderer {
       car.model.root.userData.destroyed = vehicle.health <= 0;
     }
     for (const [id, car] of this.cars) if (!carsSeen.has(id)) { this.dynamicActors.remove(car.model.root); this.disposeObject(car.model.root); this.cars.delete(id); }
+    const pickupsSeen = new Set<string>();
     for (const loot of snapshot.loot) {
+      pickupsSeen.add(loot.id);
       let pickup = this.pickups.get(loot.id);
       if (!pickup && loot.active) {
-        pickup = createLoot(loot.kind); pickup.position.set(loot.x, 0, loot.z); this.pickups.set(loot.id, pickup); this.dynamicActors.add(pickup);
+        pickup = createLoot(loot.kind); pickup.position.set(loot.x, loot.y ?? 0, loot.z); this.pickups.set(loot.id, pickup); this.dynamicActors.add(pickup);
         const halo = new THREE.Mesh(new THREE.RingGeometry(.43, .51, 16), new THREE.MeshBasicMaterial({ color: loot.kind === 'supply' ? '#f4d369' : '#e1e9b9', transparent: true, opacity: .45, depthWrite: false, side: THREE.DoubleSide }));
         halo.rotation.x = -Math.PI / 2; halo.position.y = .025; halo.name = 'halo'; pickup.add(halo);
       }
-      if (pickup) { pickup.visible = loot.active; pickup.userData.active = loot.active; }
+      if (pickup) { pickup.visible = loot.active; pickup.userData.active = loot.active; pickup.userData.baseY = loot.y ?? 0; }
+    }
+    for (const [id, pickup] of this.pickups) if (!pickupsSeen.has(id)) {
+      this.dynamicActors.remove(pickup); this.disposeObject(pickup); this.pickups.delete(id);
     }
     for (const node of snapshot.nodes) if (this.activeNodes.get(node.id) !== node.active) { this.island.setNodeActive(node.id, node.active); this.activeNodes.set(node.id, node.active); }
     const structuresSeen = new Set<string>();
@@ -266,9 +272,10 @@ export class TurnedRenderer {
     for (const [id, pickup] of this.pickups) {
       pickup.visible = pickup.userData.active && pickup.position.distanceToSquared(this.camera.position) < 85 * 85;
       if (!pickup.visible) continue;
-      pickup.position.y = .08 + Math.sin(this.time * 2.2 + id.length) * .055;
+      const baseY = pickup.userData.baseY ?? 0;
+      pickup.position.y = baseY + .08 + Math.sin(this.time * 2.2 + id.length) * .055;
       pickup.rotation.y = Math.sin(this.time * .45 + id.length) * .14;
-      const halo = pickup.getObjectByName('halo'); if (halo) halo.position.y = .025 - pickup.position.y;
+      const halo = pickup.getObjectByName('halo'); if (halo) halo.position.y = baseY + .025 - pickup.position.y;
     }
     for (const model of this.structures.values()) {
       const flame = model.getObjectByName('flame'); if (flame) { flame.scale.y = .9 + Math.sin(this.time * 15) * .14; flame.rotation.y = this.time * .5; }
@@ -311,7 +318,7 @@ export class TurnedRenderer {
     for (const spawn of VEHICLE_SPAWNS) {
       const car = createVehicle(spawn.kind, spawn.color); car.root.position.set(spawn.x, 0, spawn.z); car.root.rotation.y = spawn.yaw; this.previewActors.add(car.root);
     }
-    for (const loot of LOOT_SPAWNS) { const model = createLoot(loot.kind); model.position.set(loot.x, .05, loot.z); this.previewActors.add(model); }
+    for (const loot of LOOT_SPAWNS) { const model = createLoot(loot.kind); model.position.set(loot.x, (loot.y ?? 0) + .05, loot.z); this.previewActors.add(model); }
     for (let i = 0; i < ZOMBIE_SPAWNS.length; i += 3) {
       const spawn = ZOMBIE_SPAWNS[i], model = createZombie(spawn.kind); model.root.position.set(spawn.x, 0, spawn.z); model.root.rotation.y = i * 1.7; this.previewActors.add(model.root);
     }
@@ -406,6 +413,7 @@ export class TurnedRenderer {
     this.target.set(p.x, p.y, p.z);
     if (!this.localReady || this.localPosition.distanceToSquared(this.target) > 144) { this.localPosition.copy(this.target); this.localReady = true; }
     this.localPosition.lerp(this.target, alpha);
+    this.island.setInteriorView(this.localPosition.x, this.localPosition.z);
     this.bob += dt * (p.moving ? 10 : 2);
     const bob = p.moving && p.y < .02 ? Math.sin(this.bob * 2) * .025 : 0;
     if (p.vehicleId) {
@@ -416,7 +424,8 @@ export class TurnedRenderer {
       // Keep chase cameras outside solid buildings when backing into a wall.
       for (let step = 1; step <= 6; step += .4) {
         const x = center.x + behindX * step, z = center.z + behindZ * step;
-        if (ISLAND_BUILDINGS.some(b => Math.abs(x-b.x) < b.width/2+.3 && Math.abs(z-b.z) < b.depth/2+.3)) { distance = Math.max(.7, step - .5); break; }
+        const cameraHeight = 3.1 - this.pitch * 1.3;
+        if (BUILDING_WALLS.some(b => cameraHeight > b.y - .2 && cameraHeight < b.y + b.height + .2 && Math.abs(x-b.x) < b.width/2+.3 && Math.abs(z-b.z) < b.depth/2+.3)) { distance = Math.max(.7, step - .5); break; }
       }
       this.camera.position.set(center.x + behindX * distance, 3.1 - this.pitch * 1.3, center.z + behindZ * distance);
       this.camera.lookAt(center.x - behindX * 8, 1.7 + this.pitch * 6, center.z - behindZ * 8);

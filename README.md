@@ -1,6 +1,6 @@
 # Turned
 
-An original, first-person cooperative survival game in the browser. Make a private expedition, share its invite code, and survive **Pinefall Island** with up to eight players. The island has a harbor town, farmland, a military outpost, an airstrip, and a radio station. All models are original, procedural low-poly geometry.
+An original, first-person cooperative survival game in the browser. Make a private expedition, share its invite code, and survive **Pinefall Island** with up to eight players. Explore three settlements, farmland, a military base, an airstrip, and a radio station across eight named areas. The map has 29 buildings, including 28 enterable homes, shops, clinics, diners, barns, workshops, barracks, and an armory. All models are original, procedural low-poly geometry.
 
 ## Play locally
 
@@ -19,6 +19,7 @@ Use a desktop browser with WebGL2, a keyboard, and a mouse. Click into the game 
 
 - Recover three marked supply crates across the island, then activate the radio at **Radio Ridge**. Keep someone near the radio through the rescue countdown while infected attack.
 - Scavenge ammunition, food, water, bandages, scrap, cloth, and fuel. Hunger, thirst, stamina, and ammunition matter. Friendly fire is disabled.
+- Enter buildings through their open front doorways. Rooms contain beds, desks, sofas, storage shelves, counters, crates, and other themed furniture. Search floors and shelves for indoor loot; clinics favor medical supplies, the military base favors ammunition, and workshops stock fuel and crafting materials. Walls and furniture block movement and gunfire; windows and doors remain open. Infected can pursue you indoors.
 - Equip the hatchet to harvest trees, rocks, and salvage piles. Open crafting to make bandages, barricades, campfires, and workbenches. Workbenches unlock ammunition and the field shotgun.
 - Structures are placed on open ground **three meters ahead**. Barricades obstruct infected; campfires heal nearby survivors. Crafting is validated on the server and shared by everyone in the lobby. Use the hatchet to dismantle structures.
 - Drive jeeps and pickups. Friends can ride in passenger seats. Vehicles use fuel, take collision damage, and can run over infected. Slow down to get out. Carry fuel and interact with a depleted vehicle to refuel it.

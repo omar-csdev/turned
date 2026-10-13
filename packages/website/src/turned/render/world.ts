@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { ISLAND_BUILDINGS, LOCATIONS, RADIO, RESOURCE_NODES, ROADS, TREES, isOnIsland } from '@survive-the-night/game-shared/turned/island';
+import { BUILDING_WALLS, INTERIOR_PROPS, ISLAND_BUILDINGS, LOCATIONS, RADIO, RESOURCE_NODES, ROADS, TREES, isOnIsland } from '@survive-the-night/game-shared/turned/island';
+import { createFurnishing } from './furnishings';
 
 /** A small original island, assembled from low-poly geometry and batched by material. */
 export interface IslandScene {
@@ -8,11 +9,13 @@ export interface IslandScene {
   water: THREE.Mesh;
   clouds: THREE.Group;
   setNodeActive(id: string, active: boolean): void;
+  setInteriorView(x?: number, z?: number): void;
 }
 
 export function createIsland(): IslandScene {
   const root = new THREE.Group();
   const scenery = new THREE.Group();
+  const roofs = new Map<string, THREE.Group>();
   const materials = new Map<string, THREE.MeshStandardMaterial>();
   const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
   const material = (color: string, emissive = false) => {
@@ -24,6 +27,13 @@ export function createIsland(): IslandScene {
     const mesh = new THREE.Mesh(boxGeometry, material(color));
     mesh.position.set(x, y, z); mesh.scale.set(w, h, d); mesh.rotation.y = angle;
     mesh.castShadow = mesh.receiveShadow = true; parent.add(mesh); return mesh;
+  };
+  const interiorPanel = (...args: Parameters<typeof box>) => {
+    const panel = box(...args);
+    // Thin paint sits beside a solid caster. Sampling that near-coplanar shadow
+    // causes striped acne; ambient/directional lighting still shades the paint.
+    panel.castShadow = panel.receiveShadow = false;
+    return panel;
   };
   const cylinder = (parent: THREE.Object3D, x: number, y: number, z: number, radius: number, height: number, color: string, top = radius, sides = 8) => {
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(top, radius, height, sides), material(color));
@@ -94,47 +104,118 @@ export function createIsland(): IslandScene {
     geo.computeVertexNormals(); geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(points.length / 3 * 2), 2));
     const mesh = new THREE.Mesh(geo, material(color)); mesh.castShadow = true; mesh.receiveShadow = true; return mesh;
   }
+  const themeSigns: Record<string, string> = {
+    market: 'PINE & CO.  •  SUPPLIES', clinic: 'PINEFALL  •  COMMUNITY CLINIC',
+    diner: 'THE PINECONE  •  DINER', workshop: 'COASTAL  •  REPAIRS',
+    barn: 'GOLDEN FIELDS  •  FARM', barracks: 'NORTHSTAR  •  BARRACKS',
+    armory: 'NORTHSTAR  •  ARMORY', office: 'PINEFALL  •  AIR OFFICE',
+  };
   for (const building of ISLAND_BUILDINGS) {
     const g = new THREE.Group(); g.position.set(building.x, 0, building.z); scenery.add(g);
     const { width: w, depth: d, height: h } = building;
-    box(g, 0, .18, 0, w + .2, .36, d + .2, '#8c8877');
-    box(g, 0, h / 2, 0, w, h, d, building.color);
-    box(g, 0, .65, 0, w + .1, .22, d + .1, '#e1d4b3');
-    box(g, 0, h - .15, 0, w + .16, .3, d + .16, '#e7ddbd');
-    const r = roof(w + .8, d + .8, building.kind === 'hangar' ? 1.6 : h * .36, building.roof); r.position.y = h; g.add(r);
-    for (const x of [-w / 2 + .16, w / 2 - .16]) for (const z of [-d / 2 - .05, d / 2 + .05]) box(g, x, h / 2, z, .28, h, .18, '#ddd1b3');
-    for (const side of [-1, 1]) {
-      const z = side * (d / 2 + .022);
-      const windowY = h > 6 ? 4.8 : 2.85;
-      for (const x of [-w * .3, w * .3]) {
-        box(g, x, windowY, z, 2.05, 1.7, .13, '#dedac3');
-        box(g, x, windowY, z + side * .085, 1.7, 1.36, .03, '#497878');
-        box(g, x, windowY, z + side * .11, .095, 1.5, .04, '#e1d9b9');
-        box(g, x, windowY, z + side * .12, 1.8, .09, .04, '#e1d9b9');
-        box(g, x, windowY - .88, z, 2.25, .15, .42, '#e0d6b6');
+    const enterable = building.enterable !== false;
+    const doorWidth = building.kind === 'barn' ? 4.8 : building.kind === 'hangar' ? 6 : 2.8;
+    const roofGroup = new THREE.Group(); roofGroup.name = `roof:${building.id}`;
+    roofGroup.position.copy(g.position); root.add(roofGroup); roofs.set(building.id, roofGroup);
+    const floorColor = building.theme === 'clinic' ? '#d5dcc8' : building.kind === 'hangar' ? '#a8af9d' : building.kind === 'barn' ? '#b6a171' : '#b39467';
+    // Keep the walkable surface at ground level; the foundation never seals the door.
+    box(g, 0, -.09, 0, w + .12, .2, d + .12, '#98967e');
+    box(g, 0, .013, 0, w - .12, .012, d - .12, floorColor);
+    if (enterable) {
+      for (const wall of BUILDING_WALLS.filter(wall => wall.buildingId === building.id)) {
+        const x = wall.x - building.x, z = wall.z - building.z, y = wall.y + wall.height/2;
+        box(g, x, y, z, wall.width, wall.height, wall.depth, building.color);
+        if (building.kind !== 'barn') {
+          const paint = building.theme === 'clinic' ? '#e0e8d9' : building.kind === 'house' ? '#e4ddc6' : '#c5d0bb';
+          if (Math.abs(x) > w/2-.15) interiorPanel(g, x-Math.sign(x)*(wall.width/2+.008), y, z, .016, wall.height, wall.depth-.008, paint);
+          else if (Math.abs(z) > d/2-.15) interiorPanel(g, x, y, z-Math.sign(z)*(wall.depth/2+.008), wall.width-.008, wall.height, .016, paint);
+          else for (const side of [-1,1]) interiorPanel(g, x, y, z+side*(wall.depth/2+.008), wall.width-.008, wall.height, .016, paint);
+        }
+      }
+      // Weathered floorboards / tiled floors give interiors a clear material change.
+      if (building.kind === 'house' || building.theme === 'diner') {
+        for (let z = -d / 2 + .6; z < d / 2 - .2; z += .75) box(g, 0, .021, z, w - .4, .003, .018, '#9d825d');
+      } else if (building.theme === 'clinic' || building.theme === 'market') {
+        for (let z = -d / 2 + 1; z < d / 2 - .2; z += 1) box(g, 0, .021, z, w - .4, .003, .025, '#aeb9a6');
+        for (let x = -w / 2 + 1; x < w / 2 - .2; x += 1) box(g, x, .021, 0, .025, .003, d - .4, '#aeb9a6');
+      }
+      for (const side of [-1, 1]) {
+        const x = side * (w / 2 + .03);
+        // Side windows are open: the visible aperture exactly matches the shared wall boxes.
+        for (const z of [-1.27, 1.27]) box(g, x, 1.8, z, .19, 1.7, .14, '#e7dfc3');
+        box(g, x, .99, 0, .28, .12, 2.68, '#e7dfc3');
+        box(g, x, 2.61, 0, .19, .12, 2.68, '#e7dfc3');
+        box(g, x, .25, 0, .1, .16, d, '#d4c5a0');
+      }
+      // Jambs and parked-open door panels never cross the shared 2.8m+ doorway.
+      for (const side of [-1, 1]) {
+        box(g, side * (doorWidth/2 + .11), 1.4, d/2 + .065, .18, 2.8, .2, '#ece2c6');
+        const available = (w - doorWidth) / 2 - .3;
+        if (available > .2) box(g, side*(doorWidth/2 + available/2 + .2), .3, d/2 + .055, available, .19, .1, '#ddceb0');
+      }
+      box(g, 0, 2.9, d/2 + .06, doorWidth + .4, .2, .2, '#ece2c6');
+      box(g, 0, .015, d/2 + .7, doorWidth + .3, .025, 1.5, '#b6b39b');
+      if (building.kind === 'barn') {
+        for (const side of [-1, 1]) {
+          const door = new THREE.Group(); door.position.set(side*(doorWidth/2+1.1),0,d/2+.16); g.add(door);
+          box(door,0,1.36,0,2.1,2.7,.12,'#915548');
+          box(door,0,1.36,.085,2.08,.12,.08,'#e8dfc7');
+          const brace = box(door,0,1.36,.09,.12,3.25,.08,'#e8dfc7'); brace.rotation.z=side*.64;
+        }
+      } else if (building.kind === 'house') {
+        box(g, doorWidth/2 + .85, 1.35, d/2 + .16, 1.22, 2.7, .12, '#526f60');
+        box(g, doorWidth/2 + .45, 1.25, d/2 + .24, .08, .08, .06, '#e4c376');
+      }
+      if (building.theme === 'clinic') {
+        box(g, -w*.33, 3.1, d/2+.09, .32, 1.14, .12, '#f5efe0');
+        box(g, -w*.33, 3.1, d/2+.1, 1.12, .32, .14, '#f5efe0');
+      }
+      // Retain an interior ceiling in first person while hiding the exterior gable.
+      box(g, 0, h-.08, 0, w+.12, .17, d+.12, '#e8dfc3');
+      box(g, 0, h-.21, 0, 1.1, .1, .48, '#65756b');
+      const ceilingLight = box(g, 0, h-.273, 0, .94, .025, .33, '#f8efd0');
+      ceilingLight.material = material('#f8efd0', true);
+    } else {
+      box(g, 0, h/2, 0, w, h, d, building.color);
+      for (const x of [-w*.25,w*.25]) {
+        box(g,x,h-1.6,d/2+.04,w*.34,1.2,.12,'#d7d4b9');
+        box(g,x,h-1.6,d/2+.115,w*.27,.97,.04,'#4a7071');
       }
     }
-    const doorZ = d / 2 + .09;
-    const doorWidth = building.kind === 'barn' ? 4.5 : building.kind === 'hangar' ? 5.5 : 1.7;
-    box(g, 0, 1.55, doorZ, doorWidth + .24, 3.1, .2, '#e2d6b8');
-    box(g, 0, 1.48, doorZ + .12, doorWidth, 2.9, .08, '#5c6b5d');
-    if (building.kind === 'barn') {
-      box(g, 0, 1.48, doorZ + .18, .16, 2.9, .05, '#e8dfc7');
-      for (const side of [-1, 1]) {
-        const plank = box(g, side * 1.1, 1.45, doorZ + .22, .14, 3.5, .06, '#e8dfc7'); plank.rotation.z = side * .63;
-      }
-    } else if (building.kind !== 'hangar') {
-      const board = box(g, 0, 1.55, doorZ + .21, 1.9, .17, .12, '#9c794e'); board.rotation.z = .2;
-      box(g, 0, 1, doorZ + .21, 1.9, .17, .12, '#9c794e');
+    const r = roof(w + .8, d + .8, building.kind === 'hangar' ? 1.6 : h * .36, building.roof); r.position.y = h; roofGroup.add(r);
+    for (const x of [-w / 2 + .1, w / 2 - .1]) for (const z of [-d / 2 - .025, d / 2 + .025]) box(g, x, h / 2, z, .2, h, .14, '#ddd1b3');
+    for (const side of [-1,1]) {
+      box(roofGroup,0,h-.1,side*(d/2+.09),w+.24,.22,.22,'#e7ddbd');
+      box(roofGroup,side*(w/2+.09),h-.1,0,.22,.22,d+.24,'#e7ddbd');
     }
     if (building.kind === 'shop') {
       for (let i = 0; i < 10; i++) {
-        const awning = box(g, (i - 4.5) * w / 10, 3.75, d / 2 + .9, w / 10, .12, 1.9, i % 2 ? '#efe6c6' : '#bc6e4d'); awning.rotation.x = .13;
+        const awning = box(g, (i - 4.5) * w / 10, 3.2, d / 2 + .9, w / 10, .1, 1.9, i % 2 ? '#efe6c6' : building.theme === 'clinic' ? '#6f9f8c' : '#bc6e4d'); awning.rotation.x = .13;
       }
-      sign(g, building.id === 'harbor-store' ? 'PINE & CO.  •  SUPPLIES' : 'PINEFALL AIR', 0, 4.65, d / 2 + .06, w * .75, .66);
     }
-    if (building.kind === 'house') box(g, w * .28, h + 1.2, -d * .12, .8, 2.5, .85, '#a77858');
+    if (building.theme && themeSigns[building.theme]) {
+      sign(g, themeSigns[building.theme], 0, Math.min(h-.42,3.75), d/2+.13, Math.min(w*.78,10), .7, building.theme === 'clinic' ? '#537b6a' : '#314e45');
+    }
+    if (building.kind === 'house') box(roofGroup, w * .28, h + 1.2, -d * .12, .8, 2.5, .85, '#a77858');
     if (building.kind === 'hangar') for (let i = -w/2+.8; i < w/2; i += 1.3) box(g, i, h*.52, -d/2-.025, .05, h*.85, .06, '#7b8878');
+  }
+  for (const prop of INTERIOR_PROPS) {
+    const building = ISLAND_BUILDINGS.find(candidate => candidate.id === prop.buildingId)!;
+    const sideFacing = (prop.kind === 'shelf' || prop.kind === 'counter') && prop.depth > prop.width * 1.4;
+    // Long narrow storage units sit against side walls; swap the model dimensions
+    // before rotating so their visible front faces the aisle within the same footprint.
+    const furnishing = createFurnishing(sideFacing ? { ...prop, width: prop.depth, depth: prop.width } : prop);
+    // Reuse the island palette so hundreds of interior details batch across buildings.
+    const replaced = new Set<THREE.Material>();
+    furnishing.traverse(object => {
+      if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.MeshStandardMaterial)) return;
+      replaced.add(object.material);
+      object.material = material(`#${object.material.color.getHexString()}`);
+    });
+    replaced.forEach(surface => surface.dispose());
+    const facing = sideFacing ? (prop.x < building.x ? -Math.PI/2 : Math.PI/2) : prop.kind === 'chair' ? 0 : Math.PI;
+    furnishing.position.set(prop.x, prop.y, prop.z); furnishing.rotation.y = prop.yaw + facing;
+    scenery.add(furnishing);
   }
 
   // Airfield and agricultural land are landmarks visible from every long sightline.
@@ -243,24 +324,32 @@ export function createIsland(): IslandScene {
 
   // Collapse the static architecture by material: hundreds of details, dozens of draws.
   scenery.updateMatrixWorld(true);
-  const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const batches = new Map<string, { material: THREE.Material; geometries: THREE.BufferGeometry[]; castShadow: boolean; receiveShadow: boolean }>();
   const originals = new Set<THREE.BufferGeometry>();
   scenery.traverse(object => {
     if (!(object instanceof THREE.Mesh) || Array.isArray(object.material)) return;
     const geo = object.geometry.clone().applyMatrix4(object.matrixWorld);
     const normalized = geo.index ? geo.toNonIndexed() : geo;
     if (normalized !== geo) geo.dispose();
-    const list = batches.get(object.material) ?? []; list.push(normalized); batches.set(object.material, list); originals.add(object.geometry);
+    const key = `${object.material.uuid}:${object.castShadow}:${object.receiveShadow}`;
+    const batch = batches.get(key) ?? { material: object.material, geometries: [] as THREE.BufferGeometry[], castShadow: object.castShadow, receiveShadow: object.receiveShadow };
+    batch.geometries.push(normalized); batches.set(key, batch); originals.add(object.geometry);
   });
-  for (const [mat, geometries] of batches) {
+  for (const { material: mat, geometries, castShadow, receiveShadow } of batches.values()) {
     const merged = mergeGeometries(geometries, false);
-    if (merged) { const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = mesh.receiveShadow = true; root.add(mesh); }
+    if (merged) { const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = castShadow; mesh.receiveShadow = receiveShadow; root.add(mesh); }
     geometries.forEach(g => g.dispose());
   }
   // The unit box is shared by live resource / cloud models; keep it until renderer disposal.
   for (const geo of originals) if (geo !== boxGeometry) geo.dispose();
   const hidden = new THREE.Matrix4().makeScale(0,0,0);
-  return { root, water, clouds, setNodeActive(id, active) {
+  return { root, water, clouds, setInteriorView(x, z) {
+    for (const building of ISLAND_BUILDINGS) {
+      const roof = roofs.get(building.id)!;
+      const inside = x !== undefined && z !== undefined && building.enterable !== false && Math.abs(x-building.x) < building.width/2-.1 && Math.abs(z-building.z) < building.depth/2-.1;
+      roof.visible = !inside;
+    }
+  }, setNodeActive(id, active) {
     const index = treeIndexes.get(id);
     if (index !== undefined) for (const part of treeParts) { part.mesh.setMatrixAt(index, active ? part.matrices[index] : hidden); part.mesh.instanceMatrix.needsUpdate = true; }
     const other = otherNodes.get(id); if (other) other.visible = active;

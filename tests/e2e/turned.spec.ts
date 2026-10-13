@@ -142,6 +142,80 @@ test('two friends can host, join, move, shoot, reload, craft, drive and reconnec
   }
 });
 
+test('a survivor can enter a furnished harbor shop and recover its indoor supplies', async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
+  const game = watchGame(page);
+  const route: { step: string; x: number; z: number; health: number }[] = [];
+  let lastHeal = 0;
+  // Read authoritative positions to release real keys near each turn. No teleporting or inventory injection.
+  async function walk(key: 'w' | 'a' | 's', axis: 'x' | 'z', target: number, sprint = false) {
+    const decreasing = key !== 's';
+    if (sprint) await page.keyboard.down('Shift');
+    await page.keyboard.down(key);
+    try {
+      await expect.poll(async () => {
+        const player = game.player();
+        if (player && player.health < 60 && player.medkits > 0 && Date.now() - lastHeal > 1500) {
+          lastHeal = Date.now();
+          await page.keyboard.press('h');
+        }
+        return player && !player.dead && (decreasing ? player[axis] <= target : player[axis] >= target);
+      }, { intervals: [50], timeout: 25_000, message: `Walk ${key} to ${axis}=${target}` }).toBe(true);
+    } finally {
+      await page.keyboard.up(key);
+      if (sprint) await page.keyboard.up('Shift');
+    }
+    await expect.poll(() => game.player()?.moving, { intervals: [50] }).toBe(false);
+    const player = game.player()!;
+    route.push({ step: `${key} to ${axis}=${target}`, x: player.x, z: player.z, health: player.health });
+  }
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/');
+    const enter = page.getByRole('button', { name: 'Enter the island', exact: true });
+    await expect(enter).toBeEnabled();
+    await page.getByLabel('Your callsign').fill('Pathfinder');
+    await enter.click();
+    await expect.poll(() => game.snapshot()?.phase).toBe('playing');
+    await enter.click();
+    await expect(enter).toBeHidden();
+    await page.keyboard.press('3');
+
+    // Follow the north road, then approach the market's front door from the east.
+    await walk('w', 'z', 36.3, true);
+    await walk('a', 'x', -39.7, true);
+    await walk('s', 'z', 55.7, true);
+    await walk('a', 'x', -50.7);
+    expect(game.player()!.x).toBeGreaterThan(-52);
+    expect(game.player()!.x).toBeLessThan(-50);
+    expect(game.player()!.z).toBeGreaterThan(53.5);
+    await walk('w', 'z', 51.5);
+    expect(game.player()!.z).toBeLessThan(53.5);
+    expect(game.player()!.z).toBeGreaterThan(44.5);
+
+    const supply = () => game.snapshot()?.loot.find(item => item.id === 'supply-harbor');
+    expect(supply()?.buildingId).toBe('harbor-store');
+    expect(supply()?.active).toBe(true);
+    await page.keyboard.press('e');
+    await expect.poll(() => supply()?.active).toBe(false);
+    await expect.poll(() => game.snapshot()?.supplies).toBe(1);
+    await expect(page.locator('.turned-hud')).toContainText('1 / 3 SUPPLIES');
+    await page.screenshot({ path: testInfo.outputPath('turned-furnished-harbor.png') });
+
+    // Walk farther down the clear aisle and collect ordinary floor loot behind the supply crate.
+    await walk('w', 'z', 48.4);
+    const indoorLootBefore = game.snapshot()!.loot.filter(item => item.active && item.buildingId === 'harbor-store').length;
+    await page.keyboard.press('e');
+    await expect.poll(() => game.snapshot()!.loot.filter(item => item.active && item.buildingId === 'harbor-store').length).toBe(indoorLootBefore - 1);
+    expect(game.player()!.dead).toBe(false);
+    expect(game.errors).toEqual([]);
+  } finally {
+    await testInfo.attach('harbor-walk', { contentType: 'application/json', body: JSON.stringify({ route,
+      player: game.player(), phase: game.snapshot()?.phase, errors: game.errors,
+    }, null, 2) });
+  }
+});
+
 test('settings persist, narrow menus fit, and invalid invitations show a useful error', async ({ page }) => {
   const game = watchGame(page);
   await page.setViewportSize({ width: 390, height: 844 });

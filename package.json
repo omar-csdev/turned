@@ -18,7 +18,7 @@
     "dev:turned-client": "npm run dev:turned --workspace=packages/website",
     "dev:turned-server": "npm run dev:turned --workspace=packages/game-server",
     "build": "npm run build:turned --workspace=packages/game-server && npm run build --workspace=packages/website",
-    "test:turned": "npm run test --workspace=packages/game-shared -- --run src/turned && npm run test --workspace=packages/game-server -- --run src/turned && vitest run packages/website/src/turned/engine.test.ts --config packages/game-client/vitest.config.ts",
+    "test:turned": "npm run test --workspace=packages/game-shared -- --run src/turned && npm run test --workspace=packages/game-server -- --run src/turned && vitest run packages/website/src/turned --config packages/game-client/vitest.config.ts",
     "start:turned-server": "npm run start:turned --workspace=packages/game-server",
     "test:e2e": "playwright test"
   },

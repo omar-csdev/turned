@@ -18,7 +18,7 @@ export interface PlayerState extends Vec2 {
 }
 export interface ZombieState extends Vec2 { id: string; y: number; yaw: number; health: number; kind: 'walker' | 'runner' | 'armored'; attacking: boolean }
 export interface VehicleState extends Vec2 { id: string; yaw: number; speed: number; fuel: number; health: number; kind: 'jeep' | 'pickup'; color: string; seats: (string | null)[] }
-export interface LootState extends Vec2 { id: string; kind: LootKind; active: boolean }
+export interface LootState extends Vec2 { id: string; kind: LootKind; active: boolean; y?: number; buildingId?: string }
 export interface ResourceNodeState { id: string; health: number; active: boolean }
 export interface BuildingState extends Vec2 { id: string; kind: BuildingKind; yaw: number; health: number; ownerId: string }
 export interface GameEvent extends Vec2 { id: number; type: 'shot' | 'hit' | 'kill' | 'pickup' | 'hurt' | 'build' | 'notice' | 'win'; y?: number; actorId?: string; targetId?: string; weapon?: WeaponId; text?: string; headshot?: boolean }

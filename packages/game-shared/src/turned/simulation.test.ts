@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GameSimulation } from './simulation';
 import { EMPTY_INPUT, WEAPONS } from './protocol';
 import type { PlayerInput, PlayerState } from './protocol';
-import { ISLAND_BUILDINGS, RADIO, RESOURCE_NODES, SPAWN, isBlocked } from './island';
+import { INTERIOR_PROPS, ISLAND_BUILDINGS, LOOT_SPAWNS, RADIO, RESOURCE_NODES, SPAWN, WORLD_SIZE, buildingEntrance, isBlocked, isInsideBuilding } from './island';
 
 function setup() {
   const game = new GameSimulation();
@@ -81,14 +81,16 @@ describe('Turned cooperative simulation', () => {
   it('blocks houses and the shoreline without preventing movement along a wall', () => {
     const { player, advance } = setup();
     const house = ISLAND_BUILDINGS[0];
-    player.x = house.x; player.z = house.z + house.depth / 2 + .5;
+    player.x = house.x + 3; player.z = house.z + house.depth / 2 + .7;
     advance(1, { moveZ: 1 });
     expect(player.z).toBeGreaterThanOrEqual(house.z + house.depth / 2 + .38);
     const x = player.x;
     advance(.3, { moveX: 1, moveZ: 1 });
     expect(player.x).toBeGreaterThan(x);
-    player.x = 0; player.z = 130; player.yaw = Math.PI;
-    advance(10, { moveZ: 1 });
+    let boundary = 120;
+    while (boundary < WORLD_SIZE && !isBlocked(0, boundary, .38)) boundary++;
+    player.x = 0; player.z = boundary - 2; player.yaw = Math.PI;
+    advance(2, { moveZ: 1 });
     expect(isBlocked(player.x, player.z, .38)).toBe(false);
     const shore = player.z;
     advance(1, { moveZ: 1 });
@@ -126,13 +128,11 @@ describe('Turned cooperative simulation', () => {
 
   it('does not shoot through map buildings and consumes ammunition even when a shot misses', () => {
     const { game, player, input } = setup();
-    const target = game.snapshot().zombies.find(z => z.x < -70 && z.z < -70)!;
+    const target = game.snapshot().zombies[0];
     expect(target).toBeDefined();
-    // Shoot through the outpost hangar toward the infected beyond it.
-    const hangar = ISLAND_BUILDINGS.find(b => b.id === 'outpost-a')!;
-    const dx = target.x - hangar.x, dz = target.z - hangar.z;
-    const length = Math.hypot(dx, dz);
-    player.x = hangar.x - dx / length * 15; player.z = hangar.z - dz / length * 15;
+    // Shoot through the solid rear wall toward infected on the street in front.
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    player.x = house.x; player.z = house.z - house.depth / 2 - 2;
     aimAt(player, target);
     input({ fire: true }); game.step(.05);
     expect(game.snapshot().zombies.find(z => z.id === target.id)?.health).toBe(target.health);
@@ -218,7 +218,7 @@ describe('Turned cooperative simulation', () => {
   it('rejects colliding placements without consuming materials and barricades block walking', () => {
     const { game, player, advance } = setup();
     const house = ISLAND_BUILDINGS[0];
-    player.x = house.x; player.z = house.z + house.depth / 2 + 2;
+    player.x = house.x + 3; player.z = house.z + house.depth / 2 + 3;
     game.action(player.id, { action: 'craft', recipe: 'barricade' });
     expect(game.snapshot().buildings).toHaveLength(0);
     expect(player.resources.wood).toBe(8);
@@ -362,6 +362,91 @@ describe('Turned cooperative simulation', () => {
     expect(game.snapshot().buildings).toHaveLength(0);
     advance(.4, { moveZ: 1 });
     expect(player.z).toBeLessThan(57);
+  });
+
+  it('lets survivors enter through open doors while furniture remains solid', () => {
+    const { player, advance } = setup();
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    const entry = buildingEntrance(house, 1.4);
+    player.x = entry.x; player.z = entry.z; player.yaw = 0;
+    advance(.8, { moveZ: 1 });
+    expect(isInsideBuilding(player.x, player.z, house)).toBe(true);
+    const prop = INTERIOR_PROPS.find(p => p.collidable && p.yaw === 0 && !isBlocked(p.x, p.z + p.depth / 2 + .7, .4))!;
+    expect(prop).toBeDefined();
+    player.x = prop.x; player.z = prop.z + prop.depth / 2 + .7;
+    advance(.5, { moveZ: 1 });
+    expect(player.z).toBeGreaterThanOrEqual(prop.z + prop.depth / 2 + .38);
+  });
+
+  it('allows bullets through a doorway and stops bullets against the adjoining wall', () => {
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    const open = setup(), closed = setup();
+    const target = open.game.snapshot().zombies.find(z => Math.abs(z.x + 57) < .1 && Math.abs(z.z - 37) < .1)!;
+    expect(target).toBeDefined();
+    open.player.x = house.x; open.player.z = house.z + house.depth / 2 - 2;
+    aimAt(open.player, target);
+    open.input({ fire: true }); open.game.step(.05);
+    expect(open.game.snapshot().zombies.find(z => z.id === target.id)?.health ?? 0).toBeLessThan(target.health);
+    closed.player.x = house.x - 4; closed.player.z = house.z + house.depth / 2 - 2;
+    aimAt(closed.player, target);
+    closed.input({ fire: true }); closed.game.step(.05);
+    expect(closed.game.snapshot().zombies.find(z => z.id === target.id)?.health).toBe(target.health);
+  });
+
+  it('requires line of sight to indoor loot and permits collecting it after entering', () => {
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    // A controlled item next to a solid section of the front wall isolates wall reachability.
+    const item = { id: 'test-interior-ammo', kind: 'ammo' as const, x: house.x + 3, z: house.z + house.depth / 2 - .8, y: .1 };
+    LOOT_SPAWNS.push(item);
+    let fixture: ReturnType<typeof setup>;
+    try { fixture = setup(); } finally { LOOT_SPAWNS.pop(); }
+    const { game, player, advance } = fixture;
+    player.x = item.x; player.z = house.z + house.depth / 2 + .8;
+    game.action(player.id, { action: 'interact' });
+    expect(game.snapshot().loot.find(l => l.id === item.id)?.active).toBe(true);
+    player.x = item.x; player.z = item.z - .7;
+    advance(.2);
+    game.action(player.id, { action: 'interact' });
+    expect(game.snapshot().loot.find(l => l.id === item.id)?.active).toBe(false);
+  });
+
+  it('lets a survivor collect supplies resting above a solid cabinet', () => {
+    const { game, player } = setup();
+    const item = game.snapshot().loot.find(l => l.id === 'harbor-1-prop-1-loot')!;
+    expect(item.y).toBeGreaterThan(1.4);
+    player.x = item.x - 1.2; player.z = item.z;
+    expect(isBlocked(player.x, player.z, .38)).toBe(false);
+    game.action(player.id, { action: 'interact' });
+    expect(game.snapshot().loot.find(l => l.id === item.id)?.active).toBe(false);
+    expect(player.medkits).toBe(3);
+  });
+
+  it('allows nearby infected to chase survivors through a front doorway', () => {
+    const { game, player } = setup();
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    const target = game.snapshot().zombies.find(z => Math.abs(z.x + 57) < .1 && Math.abs(z.z - 37) < .1)!;
+    expect(target).toBeDefined();
+    player.x = house.x; player.z = house.z + house.depth / 2 - 2;
+    for (let i = 0; i < 180; i++) { player.health = 100; game.step(.05); }
+    const infected = game.snapshot().zombies.find(z => z.id === target.id)!;
+    expect(isInsideBuilding(infected.x, infected.z, house)).toBe(true);
+    expect(Math.hypot(infected.x - player.x, infected.z - player.z)).toBeLessThan(1.5);
+    player.z = house.z + house.depth / 2 + 7;
+    for (let i = 0; i < 140; i++) { player.health = 100; game.step(.05); }
+    const escaped = game.snapshot().zombies.find(z => z.id === target.id)!;
+    expect(isInsideBuilding(escaped.x, escaped.z, house)).toBe(false);
+    expect(Math.hypot(escaped.x - player.x, escaped.z - player.z)).toBeLessThan(1.5);
+  });
+
+  it('routes infected through a house interior doorway to the rear bedroom', () => {
+    const { game, player } = setup();
+    const house = ISLAND_BUILDINGS.find(b => b.id === 'harbor-1')!;
+    const target = game.snapshot().zombies.find(z => Math.abs(z.x + 57) < .1 && Math.abs(z.z - 37) < .1)!;
+    player.x = house.x + 2; player.z = house.z - house.depth / 2 + 2;
+    for (let i = 0; i < 280; i++) { player.health = 100; game.step(.05); }
+    const infected = game.snapshot().zombies.find(z => z.id === target.id)!;
+    expect(infected.z).toBeLessThan(house.z - house.depth * .1);
+    expect(Math.hypot(infected.x - player.x, infected.z - player.z)).toBeLessThan(1.5);
   });
 
   it('kills players attacked by infected and enforces a five-second respawn delay', () => {
