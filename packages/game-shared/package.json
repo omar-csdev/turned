@@ -14,7 +14,8 @@
     "./events/*": "./src/events/*.ts",
     "./network/*": "./src/network/*.ts",
     "./map/*": "./src/map/*.ts",
-    "./quests/*": "./src/quests/*.ts"
+    "./quests/*": "./src/quests/*.ts",
+    "./turned/*": "./src/turned/*.ts"
   },
   "scripts": {
     "build": "echo 'game-shared is bundled by consumers'",

@@ -75,7 +75,7 @@ export class AuctionActionEvent implements GameEvent<AuctionActionEventData> {
     }
     const listingId = new TextDecoder().decode(bytes);
     let listQuantity = 0;
-    if (reader.buffer.byteLength - reader.getOffset() >= 4) {
+    if (reader.getRemainingBytes() >= 4) {
       listQuantity = reader.readUInt32();
     }
     return { auctionHouseEntityId, kind, bagSlotIndex, price, listingId, listQuantity };

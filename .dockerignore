@@ -1,0 +1,13 @@
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+.git
+**/dist
+**/.output
+**/.nitro
+**/.tanstack
+**/*.tsbuildinfo
+**/.cache
+**/test-results
+**/playwright-report

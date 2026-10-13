@@ -873,7 +873,7 @@ export function NpcAuthoringPanel({
                         {inner}
                       </div>
                     ) : (
-                      <Fragment key={`single-${row}-${col}-${chunk.startIdx}`}>{inner}</Fragment>
+                      <Fragment key={`single-${row}-${col}-${chunk.kind === "single" ? chunk.startIdx : chunk.groupId}`}>{inner}</Fragment>
                     );
 
                   const indices =

@@ -553,7 +553,7 @@ export async function getLeaderboardStats(limit: number = 100): Promise<
     const experience = resolvePersistedExperience(row.experience, row.zombieKills);
     return {
       rank: index + 1,
-      playerName: row.playerName,
+      playerName: row.playerName ?? "Survivor",
       playerImage: row.playerImage,
       level: getLevelFromTotalExperience(experience),
       experience,

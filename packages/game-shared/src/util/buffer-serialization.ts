@@ -630,6 +630,11 @@ export class BufferReader {
     return this.offset < this.buffer.byteLength;
   }
 
+  /** Remaining readable bytes, without exposing the backing buffer. */
+  getRemainingBytes(): number {
+    return this.buffer.byteLength - this.offset;
+  }
+
   /**
    * Read a record/object as key-value pairs
    */

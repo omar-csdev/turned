@@ -7,7 +7,10 @@
     "build": "tsup && (test -f src/world/world-map.json && cp src/world/world-map.json dist/world-map.json || true) && (test -f src/world/world-map-npcs.json && cp src/world/world-map-npcs.json dist/world-map-npcs.json || true) && (test -f src/world/world-map-quests.json && cp src/world/world-map-quests.json dist/world-map-quests.json || true)",
     "check:ts-sources": "node ./scripts/check-ts-sources.mjs",
     "pretest": "npm run check:ts-sources",
-    "test": "vitest"
+    "test": "vitest",
+    "dev:turned": "tsx watch src/turned/server.ts",
+    "build:turned": "tsup --config false src/turned/server.ts --format esm --platform node --target node24 --out-dir dist/turned",
+    "start:turned": "node dist/turned/server.js"
   },
   "keywords": [],
   "type": "module",
@@ -16,6 +19,7 @@
   "description": "",
   "devDependencies": {
     "@types/node": "^22.9.3",
+    "@types/ws": "^8.18.2",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
@@ -26,6 +30,7 @@
     "@survive-the-night/game-shared": "*",
     "dotenv": "^16.4.7",
     "obscenity": "^0.4.5",
-    "uwebsockets.js": "github:uNetworking/uWebSockets.js#v20.56.0"
+    "uwebsockets.js": "github:uNetworking/uWebSockets.js#v20.56.0",
+    "ws": "^8.22.0"
   }
 }

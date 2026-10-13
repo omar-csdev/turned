@@ -1,0 +1,41 @@
+services:
+  website:
+    build:
+      context: .
+      dockerfile: Dockerfile.turned
+    command: ["node", "packages/website/.output/server/index.mjs"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+  world:
+    build:
+      context: .
+      dockerfile: Dockerfile.turned
+    environment:
+      TURNED_PORT: 3003
+      TURNED_TRUST_PROXY: "1"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/turned-api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+  gateway:
+    image: nginx:1.28-alpine
+    depends_on:
+      website:
+        condition: service_healthy
+      world:
+        condition: service_healthy
+    ports: ["8080:80"]
+    volumes:
+      - ./deploy/turned.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

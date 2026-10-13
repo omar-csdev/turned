@@ -85,6 +85,7 @@ describe("client event serialization", () => {
     expect(buffer).toBeInstanceOf(ArrayBuffer);
 
     const decoded = deserializeClientEvent(ClientSentEvents.REQUEST_COMBAT_ROLL, buffer!);
+    if (!decoded) throw new Error("Combat roll deserialization returned no event");
     expect((decoded[0] as { angle: number }).angle).toBeCloseTo(Math.PI * 1.25, 4);
   });
 

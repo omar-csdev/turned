@@ -32,55 +32,19 @@ export const Route = createRootRouteWithContext<{
         content: "width=device-width, initial-scale=1",
       },
       ...seo({
-        title: "Survive the Night - Multiplayer Zombie Survival Game",
+        title: "Turned — Survive together",
         description:
-          "An online multiplayer game where you must survive the night against hordes of zombies. Build bases with your friends, collect weapons, and craft items to see how long you'll last.",
+          "Survive Pinefall Island together. Scavenge supplies, craft defenses, drive with friends, and fight the infected in Turned, a cooperative browser survival game.",
         keywords:
-          "survive the night, zombie survival game, multiplayer game, online game, survival game",
+          "Turned, cooperative survival, zombie survival game, browser game, crafting, multiplayer",
       }),
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      {
-        rel: "preconnect",
-        href: "https://fonts.googleapis.com",
-      },
-      {
-        rel: "preconnect",
-        href: "https://fonts.gstatic.com",
-        crossOrigin: "anonymous",
-      },
-      {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Anton&display=swap",
-      },
-      {
-        rel: "apple-touch-icon",
-        sizes: "180x180",
-        href: "/apple-touch-icon.png",
-      },
-      {
-        rel: "icon",
-        type: "image/png",
-        sizes: "32x32",
-        href: "/favicon-32x32.png",
-      },
-      {
-        rel: "icon",
-        type: "image/png",
-        sizes: "16x16",
-        href: "/favicon-16x16.png",
-      },
-      { rel: "manifest", href: "/site.webmanifest", color: "#fffff" },
-      { rel: "icon", href: "/favicon.ico" },
+      { rel: "icon", type: "image/svg+xml", href: "/turned-icon.svg" },
+      { rel: "manifest", href: "/site.webmanifest" },
     ],
-    scripts: [
-      {
-        src: "https://umami-production-101d.up.railway.app/script.js",
-        defer: true,
-        "data-website-id": "6e6265bb-25ed-4f8b-819b-44a27434ed51",
-      },
-    ],
+    scripts: [],
   }),
   errorComponent: (props) => {
     return (
@@ -105,7 +69,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const routerState = useRouterState();
   const prevPathnameRef = React.useRef("");
   const path = routerState.location.pathname;
-  const isPlayRoute = path === "/play";
+  const isPlayRoute = path === "/" || path === "/play" || path === "/classic";
   const isEditorRoute = path === "/editor" || path.startsWith("/editor/");
 
   React.useEffect(() => {
@@ -169,10 +133,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           }}
         />
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Anton&display=swap');
+
           
           html, body, * {
-            font-family: 'Oswald', ui-sans-serif, system-ui, sans-serif !important;
+            font-family: ui-sans-serif, system-ui, sans-serif;
             letter-spacing: 0.02em;
           }
           
